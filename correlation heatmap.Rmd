@@ -1,0 +1,49 @@
+---
+title: "Correlation Heatmap"
+output: pdf_document
+date: "2024-04-07"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reshape2)
+```
+
+```{r}
+dat <- read.csv("lymp_demo_health.csv.csv")
+leaf <- dat[,c(4,7:21)]
+colnames(leaf)
+colnames(leaf) <- c("LYMPO","TO","TCD4CM","TCD4N","TCD4EM","TCD4TDEM",
+                    "TCD4O","TCD8CM","TCD8N","TCD8EM","TCD8TDEM","TCD8O",
+                    "BMIgD+","BMIgD-","BN","BO")
+cor_leaf <- cor(leaf)
+```
+
+```{r}
+# Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+}
+```
+
+```{r}
+upper_tri <- get_upper_tri(cor_leaf)
+melted_corleaf <- melt(upper_tri)
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(data = melted_corleaf, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+theme(axis.text.x=element_text(angle = 45, hjust = 1))+
+ coord_fixed()
+```
+
+
+
