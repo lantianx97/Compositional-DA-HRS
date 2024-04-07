@@ -1,0 +1,218 @@
+---
+title: "Regression Tables"
+output: pdf_document
+date: "2024-04-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library("ggplot2")
+library(stringr)
+library(broom)
+library(knitr)
+library(tidyr)
+library(tidyverse)
+library(kableExtra)
+library(Compositional)
+library(SpiecEasi)
+library(Compositional)
+library(ggpubr)
+library(table1)
+library(broom)
+library(Compack)
+library(easyCODA)
+library(writexl)
+```
+
+```{r}
+linear_BIC <- function(betas, outcome, covariates) {
+  df <- sum(betas[1:16]!= 0)
+  n <- length(outcome)
+  X <- cbind(covariates, rep(1, n))
+  y_hat <- X%*%betas
+  resid_vec <-outcome-y_hat
+  s <- sqrt(sum((outcome-y_hat)^2)/n)
+  ll <- -n/2 * log(2 * pi) - n * log(s) - 1/2/s^2 * sum(resid_vec^2)
+  BIC <- log(n)*df-2*ll
+  return (BIC)
+}
+```
+
+
+```{r}
+dat <- read.csv("lymp_demo_health.csv")
+lymp_leaf <- as.matrix(dat[,c(4,7:21)])
+demo1 <- dat[,c("gender","R13AGEY_B","cmv")]
+race_black <- ifelse(dat$race == 1, 1, 0)
+race_hispanic <- ifelse(dat$race == 2, 1, 0)
+race_other <- ifelse(dat$race == 3, 1, 0)
+
+edu_middleSchool <- ifelse(dat$edu == 1, 1, 0)
+edu_highSchool <- ifelse(dat$edu == 2, 1, 0)
+edu_college <- ifelse(dat$edu == 3, 1, 0)
+demo1 <- cbind(demo1, race_black, race_hispanic, race_other,edu_middleSchool,
+              edu_highSchool, edu_college)
+demo1 <- as.matrix(demo1)
+demo2 <- dat[,c("gender","R13AGEY_B")]
+demo2 <- as.matrix(demo2)
+```
+
+```{r}
+cond <- dat$R13CONDE
+model.cond1 <- compCL(y = cond, Z = lymp_leaf, Zc = demo1, intercept = T)
+
+BIC.cond1 <- apply(coef(model.cond1), 2, linear_BIC, outcome = cond, 
+             covariates = cbind(log(lymp_leaf), demo1))
+coef.cond1 <- coef(model.cond1)[,which(BIC.cond1== min(BIC.cond1))]
+
+model.cond2 <- compCL(y = cond, Z = lymp_leaf, Zc = demo2, intercept = T)
+
+BIC.cond2 <- apply(coef(model.cond2), 2, linear_BIC, outcome = cond, 
+             covariates = cbind(log(lymp_leaf), demo2))
+coef.cond2 <- coef(model.cond2)[,which(BIC.cond2== min(BIC.cond2))]
+
+model.cond3 <- compCL(y = cond, Z = lymp_leaf, intercept = T)
+
+BIC.cond3 <- apply(coef(model.cond3), 2, linear_BIC, outcome = cond, 
+             covariates = log(lymp_leaf))
+coef.cond3 <- coef(model.cond3)[,which(BIC.cond3== min(BIC.cond3))]
+```
+
+
+
+
+```{r, include = F}
+get(load("CI_cond1_boot.Rdata"))
+get(load("CI_cond2_boot.Rdata"))
+get(load("CI_cond3_boot.Rdata"))
+CI_cond1 <- round(apply(CI_cond1_boot, 1, quantile, 
+                        probs = c(0.025, 0.975)),2)
+CI_cond1_str <- apply(CI_cond1, 2, paste, collapse = ", ")
+CI_cond1_str <- paste0("(", CI_cond1_str, ")")
+CI_cond2 <- round(apply(CI_cond2_boot, 1, quantile, 
+                        probs = c(0.025, 0.975)),2)
+CI_cond2_str <- apply(CI_cond2, 2, paste, collapse = ", ")
+CI_cond2_str <- paste0("(", CI_cond2_str, ")")
+CI_cond2_str <- c(CI_cond2_str[1:18], rep("-", 7),CI_cond2_str[19])
+CI_cond3 <- round(apply(CI_cond3_boot, 1, quantile, 
+                        probs = c(0.025, 0.975)),2)
+CI_cond3_str <- apply(CI_cond3, 2, paste, collapse = ", ")
+CI_cond3_str <- paste0("(", CI_cond3_str, ")")
+CI_cond3_str <- c(CI_cond3_str[1:16], rep("-", 9),CI_cond3_str[17])
+
+coef.cond1_str <- round(coef.cond1, 3)
+coef.cond2_str <- c(round(coef.cond2,3)[1:18], rep("", 7),
+                    round(coef.cond2,3)[19])
+coef.cond3_str <- c(round(coef.cond3,3)[1:16], rep("", 9),
+                    round(coef.cond3,3)[17])
+```
+
+```{r}
+result.cond <- cbind(paste(coef.cond3_str,CI_cond3_str), 
+                      paste(coef.cond2_str, CI_cond2_str),
+                      paste(coef.cond1_str, CI_cond1_str))
+rownames(result.cond) <- colnames(CI_cond1)
+colnames(result.cond) <- c("Model 1",
+                            "Model 2",
+                            "Model 3")
+rownames(result.cond)[1:16] <- c("LYMPO","TO","TCD4CM","TCD4N","TCD4EM",
+                                 "TCD4TDEM",
+                    "TCD4O","TCD8CM","TCD8N","TCD8EM","TCD8TDEM","TCD8O",
+                    "BMIgD+","BMIgD-","BN","BO")
+rownames(result.cond)[17:25] <- c("Gender: Female", "Age", "CMV: Borderline or Reactive", 
+                                   "Race: Black",
+                                   "Race: Hispanic", "Race: Other", 
+                                   "Education: Lower Secondary",
+                                   "Education: Upper Secondary", 
+                                   "Education: Above Upper Secondary")
+
+```
+
+```{r}
+health <- dat$R13SHLT
+model.health1 <- compCL(y = health, Z = lymp_leaf, Zc = demo1, intercept = T)
+
+BIC.health1 <- apply(coef(model.health1), 2, linear_BIC, outcome = health, 
+             covariates = cbind(log(lymp_leaf), demo1))
+coef.health1 <- coef(model.health1)[,which(BIC.health1== min(BIC.health1))]
+model.health2 <- compCL(y = health, Z = lymp_leaf, Zc = demo2, intercept = T)
+
+BIC.health2 <- apply(coef(model.health2), 2, linear_BIC, outcome = health, 
+             covariates = cbind(log(lymp_leaf), demo2))
+coef.health2 <- coef(model.health2)[,which(BIC.health2== min(BIC.health2))]
+
+model.health3 <- compCL(y = health, Z = lymp_leaf, intercept = T)
+
+BIC.health3 <- apply(coef(model.health3), 2, linear_BIC, outcome = health, 
+             covariates = log(lymp_leaf))
+coef.health3 <- coef(model.health3)[,which(BIC.health3== min(BIC.health3))]
+```
+
+```{r}
+get(load("CI_health1_boot.Rdata"))
+get(load("CI_health2_boot.Rdata"))
+get(load("CI_health3_boot.Rdata"))
+
+CI_health1 <- round(apply(CI_health1_boot, 1, quantile, 
+                          probs = c(0.025, 0.975)),2)
+CI_health1_str <- apply(CI_health1, 2, paste, collapse = ", ")
+CI_health1_str <- paste0("(", CI_health1_str, ")")
+CI_health2 <- round(apply(CI_health2_boot, 1, quantile, 
+                          probs = c(0.025, 0.975)),2)
+CI_health2_str <- apply(CI_health2, 2, paste, collapse = ", ")
+CI_health2_str <- paste0("(", CI_health2_str, ")")
+CI_health2_str <- c(CI_health2_str[1:18], rep("-", 7),CI_health2_str[19])
+CI_health3 <- round(apply(CI_health3_boot, 1, quantile, 
+                          probs = c(0.025, 0.975)),2)
+CI_health3_str <- apply(CI_health3, 2, paste, collapse = ", ")
+CI_health3_str <- paste0("(", CI_health3_str, ")")
+CI_health3_str <- c(CI_health3_str[1:16], rep("-", 9),CI_health3_str[17])
+
+coef.health1_str <- round(coef.health1, 3)
+coef.health2_str <- c(round(coef.health2,3)[1:18], rep("", 7),
+                      round(coef.health2,3)[19])
+coef.health3_str <- c(round(coef.health3,3)[1:16], rep("", 9),
+                      round(coef.health3,3)[17])
+
+
+```
+
+```{r}
+result.health <- cbind( paste(coef.health3_str, CI_health3_str),
+                      paste(coef.health2_str, CI_health2_str),
+                      paste(coef.health1_str, CI_health1_str))
+rownames(result.health) <- colnames(CI_health1)
+colnames(result.health) <- c("Model 1",
+                            "Model 2",
+                            "Model 3")
+rownames(result.health)[1:16] <- c("LYMPO","TO","TCD4CM","TCD4N","TCD4EM",
+                                   "TCD4TDEM",
+                    "TCD4O","TCD8CM","TCD8N","TCD8EM","TCD8TDEM","TCD8O",
+                    "BMIgD+","BMIgD-","BN","BO")
+rownames(result.health)[17:25] <- c("Gender: Female", "Age", "CMV: Borderline or Reactive", 
+                                   "Race: Black",
+                                   "Race: Hispanic", "Race: Other", 
+                                   "Education: Lower Secondary",
+                                   "Education: Upper Secondary", 
+                                   "Education: Above Upper Secondary")
+
+```
+
+```{r}
+results.all <- cbind(result.cond, result.health)
+result.all.ordered <- as.data.frame(results.all[c("TCD4N","TCD4CM",
+                                  "TCD4EM","TCD4TDEM","TCD4O",
+                                "TCD8N","TCD8CM","TCD8EM","TCD8TDEM","TCD8O",
+                                "TO","BN", "BMIgD-","BMIgD+","BO","LYMPO",
+                                   "Age","Gender: Female", 
+                                   "Race: Black",
+                                   "Race: Hispanic", "Race: Other", 
+                                   "Education: Lower Secondary",
+                                   "Education: Upper Secondary", 
+                                   "Education: Above Upper Secondary", 
+                                   "CMV: Borderline or Reactive","Intercept"),])
+result.all.ordered <- cbind(rownames(result.all.ordered), result.all.ordered)
+colnames(result.all.ordered)[1] <- "Variable"
+write_xlsx(result.all.ordered, "results_regression.xlsx")
+```
