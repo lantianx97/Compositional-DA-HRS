@@ -1,0 +1,170 @@
+---
+title: "Demographic Tables"
+output: html_document
+date: "2024-04-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(table1)
+```
+
+# Demographic characteristics of the Health and Retirement Study analytic sample
+```{r}
+dat <- read.csv("lymp_demo_health.csv.csv")
+leaf <- dat[,c(4,7:21)]
+leaf <- leaf*100
+colnames(leaf) <- c("LYMPO","TO","TCD4CM","TCD4N","TCD4EM","TCD4TDEM",
+                    "TCD4O","TCD8CM","TCD8N","TCD8EM","TCD8TDEM","TCD8O",
+                    "BMIgD+","BMIgD-","BN","BO")
+demo <- dat[,c("gender","R13AGEY_B","cmv", "race","edu")]
+cond <- dat$R13CONDE
+health <- dat$R13SHLT
+dat.table <- cbind(leaf, demo, cond, health)
+colnames(dat.table)[17:21] <- c("Gender", "Age","CMV", "Race", "Education")
+
+dat.table$Gender <- 
+  factor(dat.table$Gender, 
+         levels=c(0,1),
+         labels=c("Male", # Reference
+                  "Female"))
+dat.table$CMV <-  factor(dat.table$CMV, 
+         levels=c(0,1),
+         labels=c("Non-reactive", # Reference
+                  "Reactive or borderline"))
+dat.table$Race <-  factor(dat.table$Race, 
+         levels=c(0,1,2,3),
+         labels=c("Non-Hispanic White", "Black",
+                  "Hispanic","Other"))
+dat.table$Education <-  factor(dat.table$Education, 
+         levels=c(0,1,2,3),
+         labels=c("Primary School", "Middle School",
+                  "High School","College and Above"))
+
+label(dat.table$cond) <- "Chronic Disease Index"
+label(dat.table$health) <- "Self-reported Health"
+render.median <- function(x, ...) {
+  c('', 
+    `Median` = median(x))
+}
+
+units(dat.table$LYMPO) <- "%"
+units(dat.table$TO) <- "%"
+units(dat.table$TCD4CM) <- "%"
+units(dat.table$TCD4N) <- "%"
+units(dat.table$TCD4EM) <- "%"
+units(dat.table$TCD4TDEM) <- "%"
+units(dat.table$TCD4O) <- "%"
+units(dat.table$TCD8CM) <- "%"
+units(dat.table$TCD8N) <- "%"
+units(dat.table$TCD8EM) <- "%"
+units(dat.table$TCD8TDEM) <- "%"
+units(dat.table$TCD8O) <- "%"
+units(dat.table$`BMIgD-`) <- "%"
+units(dat.table$`BMIgD+`) <- "%"
+units(dat.table$BN) <- "%"
+units(dat.table$BO) <- "%"
+units(dat.table$Age) <- "years"
+```
+
+
+
+```{r}
+table1(~ TCD4N+TCD4CM+TCD4EM+TCD4TDEM+TCD4O+TCD8N+TCD8CM+TCD8EM+TCD8TDEM+
+         TCD8O+TO+BN+`BMIgD-`+`BMIgD+`+BO+LYMPO, data=dat.table,
+       render.continuous=render.median,
+       extra.col=list(`P-value`=pvalue), extra.col.pos=2,)
+```
+
+
+```{r}
+table1(~ Age+Gender+Race+Education+CMV+cond+health, data=dat.table,
+       render.continuous =c(.="Median [Q1, Q3]"))
+```
+
+
+
+
+# Demographic characteristics of individuals with and without missing data on T and B cells and their subsets
+```{r}
+cell <- read.csv("dat.cell.csv")
+# Check if each participant has complete cell type data
+cell.demo <- as.data.frame(cbind(cell$HHIDPN, complete.cases(cell)))
+colnames(cell.demo) <- c("HHIDPN", "complete")
+
+```
+
+```{r}
+rand_f <- read.csv("rand_sub.csv")
+# extract info about education, sex, race, age
+sub <- c("HHIDPN", "RAGENDER", "RARACEM","RAHISPAN", "RAEDYRS","R13AGEY_B")
+rand_sub <- read.csv("rand_sub.csv")
+
+rand_sub$race <- ifelse(rand_sub$RARACEM == 1 & 
+                        rand_sub$RAHISPA == 0, 0,
+                 ifelse(rand_sub$RARACEM == 2 & 
+                        rand_sub$RAHISPA == 0, 1,
+                 ifelse(rand_sub$RAHISPA == 1, 2, 3)))
+
+rand_sub$RAEDYRS <- as.numeric(rand_sub$RAEDYRS)
+rand_sub$edu <- ifelse(rand_sub$RAEDYRS <= 8, 0,
+                ifelse(rand_sub$RAEDYRS > 8 & 
+                       rand_sub$RAEDYRS <= 11, 1,
+                ifelse(rand_sub$RAEDYRS == 12, 2,
+                ifelse(rand_sub$RAEDYRS > 12 &
+                rand_sub$RAEDYRS <= 17, 3, 4))))
+
+rand_sub$gender <- rand_sub$RAGENDER-1
+demo <- rand_sub[,c("HHIDPN", "gender", "race", "R13AGEY_B",
+                    "edu")]
+cell.demo <- merge(cell.demo, demo, by = "HHIDPN")
+
+# extract info about CMV
+vbs <- read.csv("data/HRS2016VBS.csv")
+vbs$HHIDPN <- vbs$HHID*1000+vbs$PN
+vbs <- vbs[, c("HHIDPN","PCMVGINT")]
+vbs$cmv[vbs$PCMVGINT == 1 | vbs$PCMVGINT ==3] <- 1
+vbs$cmv[vbs$PCMVGINT == 2] <- 0
+vbs <- vbs[,c("HHIDPN", "cmv")]
+cell.demo <- merge(cell.demo, vbs, by = "HHIDPN")
+```
+
+```{r}
+dat.table <- cell.demo[,c("complete", "gender","R13AGEY_B","cmv",
+                          "race","edu")]
+
+colnames(dat.table)<- c("Complete","Gender", "Age","CMV", 
+                        "Race", "Education")
+dat.table$Complete <- factor(dat.table$Complete,
+                             levels=c(0,1),
+                             labels=c("Incomplete","Complete"))
+dat.table$Gender <- 
+  factor(dat.table$Gender, 
+         levels=c(0,1),
+         labels=c("Male", # Reference
+                  "Female"))
+dat.table$CMV <-  factor(dat.table$CMV, 
+         levels=c(0,1),
+         labels=c("Non-reactive", # Reference
+                  "Reactive or borderline"))
+dat.table$Race <-  factor(dat.table$Race, 
+         levels=c(0,1,2,3),
+         labels=c("Non-Hispanic White", "Black",
+                  "Hispanic","Other"))
+dat.table$Education <-  factor(dat.table$Education, 
+         levels=c(0,1,2,3),
+         labels=c("Below Secondary", "Lower Secondary",
+                  "Upper Secondary","Above Upper Secondary"))
+
+render.median <- function(x, ...) {
+  c('', 
+    `Median` = median(x))
+}
+
+units(dat.table$Age) <- "years"
+```
+
+```{r}
+table1(~ Age+Gender+Race+Education+CMV|Complete, data=dat.table,
+       render.continuous =c(.="Median [Q1, Q3]"),overall = F)
+```
