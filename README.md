@@ -7,11 +7,15 @@ Three data sets from the HRS were used:
 
 (3) The 2016 VBS data can be found at: https://hrsdata.isr.umich.edu/data-products/2016-venous-blood-study-vbs
 
+&nbsp;
 
 The data processing.Rmd contains code used to:
 
 (1) Re-compute the percentage measures of T and B subset cells based on the proposed tree structure.  
 
-(2) Merge cell data with socio-demographic information and health outcomes across three different data sets.
+(2) Merge cell data with socio-demographic information and health outcomes across three different data sets.  
 
-The data analysis.Rmd contains code used to perform step-wise RDA, network analysis, and linear penalized log-contrast regression.
+&nbsp;
+
+The data analysis.Rmd contains code used to perform step-wise RDA, network analysis, and linear penalized log-contrast regression.  
+
