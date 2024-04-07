@@ -1,0 +1,340 @@
+---
+title: "Data Analysis"
+output: pdf_document
+date: "2024-04-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library("ggplot2")
+library(stringr)
+library(broom)
+library(knitr)
+library(tidyr)
+library(tidyverse)
+library(kableExtra)
+library(Compositional)
+library(SpiecEasi)
+library(sandwich)
+library(Compositional)
+library(iClusterPlus)
+library(ggpubr)
+library(table1)
+library(broom)
+library(Compack)
+library(easyCODA)
+library(igraph)
+```
+
+# Stepwise RDA 
+```{r}
+# Import data
+dat <- read.csv("lymp_demo_health.csv")
+# Only lymphocyte cells located at the bottom nodes are used
+leaf <- dat[,c(4,7:21)] # 16 bottom nodes
+# Rename the columns for better presentation
+colnames(leaf) <- c("LYMPO","TO","TCD4CM","TCD4N","TCD4EM","TCD4TDEM",
+                    "TCD4O","TCD8CM","TCD8N","TCD8EM","TCD8TDEM","TCD8O",
+                    "BMIgD+","BMIgD-","BN","BO")
+LR.VAR(easyCODA::CLR(leaf)) # Compute total logratio variance
+
+# Perform Stepwise RDA
+step_lymp <- STEP(leaf)
+top_lymp <- data.frame("Ratio" = step_lymp$names,
+                      "Cumulative" = step_lymp$R2max,
+                      "Additional" = c(step_lymp$R2max[1], diff(step_lymp$R2max)))
+# Export result
+write.csv(top_lymp, "results_RDA.csv", row.names = F)
+```
+
+# Plot RDA results
+```{r}
+colors <- c("Cumulative variance explained" = "darkred", 
+            "Additional variance explained" = "steelblue")
+x_labels <- top_lymp$Ratio
+ggplot(top_lymp, aes(x=1:15)) + 
+  geom_bar(aes(y = Additional, fill="Additional variance explained"), 
+           stat= "identity") +
+  geom_line(aes(y = Cumulative, color = "Cumulative variance explained")) + 
+  geom_point(aes(y = Cumulative,color = "Cumulative variance explained")) +
+  labs(x = "Ratio added", y = "% variance explained", color = "Legend") +
+  theme_classic()+
+  scale_x_continuous(breaks = 1:15, labels=x_labels)+
+    scale_colour_manual(" ", 
+            values=c("Cumulative variance explained" = "darkred", 
+            "Additional variance explained" = "steelblue"))+
+    scale_fill_manual("",values="steelblue")+
+  ggtitle("Variance explained by logratios")+
+      theme(legend.key=element_blank(),
+          legend.title=element_blank())+
+  theme(axis.text.x=element_text(angle = 45, hjust = 1))
+```
+
+# Network analysis
+```{r}
+lymp_leaf <- as.matrix(leaf)
+lymp.mb <- spiec.easi(lymp_leaf, method='mb', nlambda = 100)
+lymp.gl <- spiec.easi(lymp_leaf, method='glasso',nlambda= 100)
+```
+
+# Plot network
+```{r,message=FALSE}
+b.mb <- symBeta(getOptBeta(lymp.mb))
+colnames(b.mb) <- rownames(b.mb) <- colnames(lymp_leaf)
+ig.mb <- graph.adjacency(b.mb, mode='undirected', 
+                         add.rownames = TRUE, weighted = TRUE)
+E(ig.mb)[weight < 0]$color<-"steelblue"
+E(ig.mb)[weight > 0]$color<-"orange"
+E(ig.mb)$weight <- abs(E(ig.mb)$weight)/sum(abs(E(ig.mb)$weight))
+
+vertex_coords<-matrix(c(3,3,1.8,2.8,1.8,3.4,1,3.2,1.2,3.4,1.4,3.6,1.6,3.8,4.2,3.4,
+                        5,3.2,4.8,3.4,4.6,3.6,4.4,3.8,3,2.2,3.2,2.4,3.4,2.6,
+                        2.8,2.4), byrow = T, ncol = 2)
+
+plot(ig.mb, vertex.size = 4, vertex.color = "black",
+     vertex.label.cex = 0.8, vertex.label.color = "black",
+     edge.color = E(ig.mb)$color,
+     edge.width=E(ig.mb)$weight*30,
+     vertex.label.dist=1,
+     main = "Network plot (MB)",layout = vertex_coords)
+
+cov.gl <- as.matrix(getOptiCov(lymp.gl))
+cor.gl <- cov2cor(cov.gl)
+diag(cor.gl) <- 0
+colnames(cor.gl) <- rownames(cor.gl) <- colnames(lymp_leaf)
+ig.gl <- graph.adjacency(cor.gl, mode='undirected', 
+                         add.rownames = TRUE, weighted = TRUE)
+E(ig.gl)[weight > 0]$color<-"steelblue"
+E(ig.gl)[weight < 0]$color<-"orange"
+E(ig.gl)$weight <- abs(E(ig.gl)$weight)/sum(abs(E(ig.gl)$weight))
+plot(ig.gl, vertex.size = 4, vertex.color = "black",
+     vertex.label.cex = 0.8, vertex.label.color = "black",
+     edge.color = E(ig.gl)$color,
+     edge.width=E(ig.gl)$weight*30,
+     vertex.label.dist=1,
+     main = "Network plot (GLASSO)",layout = vertex_coords)
+```
+
+# Regression
+```{r}
+# This function computes BIC for linear regression
+linear_BIC <- function(betas, outcome, covariates) {
+  df <- sum(betas[1:16]!= 0)
+  n <- length(outcome)
+  X <- cbind(covariates, rep(1, n))
+  #print(X)
+  #print(betas)
+  y_hat <- X%*%betas
+  resid_vec <-outcome-y_hat
+  s <- sqrt(sum((outcome-y_hat)^2)/n)
+  ll <- -n/2 * log(2 * pi) - n * log(s) - 1/2/s^2 * sum(resid_vec^2)
+  BIC <- log(n)*df-2*ll
+  return (BIC)
+}
+```
+
+```{r}
+linear_estimate <- function(dat) {
+  cols <- ncol(dat)
+  outcome <- dat[,1]
+  leaf <- dat[, 2:17]
+  if (cols > 17) {
+    demo <- dat[, 18:cols]
+    m.lymp <- compCL(y = outcome, Z = leaf, Zc = demo,intercept = T)
+    covariates <- cbind(log(leaf), demo)
+    BICs <- apply(coef(m.lymp), 2, linear_BIC, outcome = outcome, 
+                  covariates = covariates)
+    coef_opt <- coef(m.lymp)[,which(BICs == min(BICs))]
+    if (!is.vector(coef_opt)) {
+      coef_opt <- coef_opt[,1]
+    }
+    
+  }
+  else {
+    m.lymp <- compCL(y = outcome, Z = leaf,intercept = T)
+    covariates <- log(leaf)
+    BICs <- apply(coef(m.lymp), 2, linear_BIC, outcome = outcome, 
+                  covariates = covariates)
+    coef_opt <- coef(m.lymp)[,which(BICs == min(BICs))]
+  }
+  return (coef_opt)
+}
+```
+
+```{r}
+demo1 <- dat[,c("gender","R13AGEY_B","cmv")]
+# Race: 0 non-Hisp white, 1 black, 2 Hispanic, 3 other
+race_black <- ifelse(dat$race == 1, 1, 0)
+race_hispanic <- ifelse(dat$race == 2, 1, 0)
+race_other <- ifelse(dat$race == 3, 1, 0)
+#Education: 0 primary school, 1 middle school, 2 high school, 3 college and above
+edu_middleSchool <- ifelse(dat$edu == 1, 1, 0)
+edu_highSchool <- ifelse(dat$edu == 2, 1, 0)
+edu_college <- ifelse(dat$edu == 3, 1, 0)
+# First set of covariates includes: gender, age, race, cmv, education
+demo1 <- cbind(demo1, race_black, race_hispanic, race_other,edu_middleSchool,
+              edu_highSchool, edu_college)
+demo1 <- as.matrix(demo1)
+
+# Second set of covariates only includes gender and age
+demo2 <- dat[,c("gender","R13AGEY_B")]
+demo2 <- as.matrix(demo2)
+```
+
+
+```{r}
+# Create bootstrap samples
+set.seed(20231121)
+samples <- replicate(n = 200, expr = sample(seq(nrow(lymp_leaf)),
+                              size = nrow(dat), replace = TRUE))
+
+# Run bootstrap
+# Chronic disease index fully adjusted
+cond <- dat$R13CONDE
+cond1 <- cbind(cond, lymp_leaf, demo1)
+CI_cond1_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- cond1[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_cond1 <- apply(CI_cond1_boot, 1, quantile, probs = c(0.025, 0.975))
+
+# Chronic disease index adjusted with only gender and age
+cond2 <- cbind(cond, lymp_leaf, demo2)
+CI_cond2_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- cond2[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_cond2 <- apply(CI_cond2_boot, 1, quantile, probs = c(0.025, 0.975))
+
+# Chronic disease index unadjusted
+cond3 <- cbind(cond, lymp_leaf)
+CI_cond3_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- cond3[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_cond3 <- apply(CI_cond3_boot, 1, quantile, probs = c(0.025, 0.975))
+```
+
+```{r}
+# Select optimal model across different lambdas by comparing BIC
+model.cond1 <- compCL(y = cond, Z = lymp_leaf, Zc = demo1, intercept = T)
+
+BIC.cond1 <- apply(coef(model.cond1), 2, linear_BIC, outcome = cond, 
+             covariates = cbind(log(lymp_leaf), demo1))
+coef.cond1 <- coef(model.cond1)[,which(BIC.cond1== min(BIC.cond1))]
+
+model.cond2 <- compCL(y = cond, Z = lymp_leaf, Zc = demo2, intercept = T)
+
+BIC.cond2 <- apply(coef(model.cond2), 2, linear_BIC, outcome = cond, 
+             covariates = cbind(log(lymp_leaf), demo2))
+coef.cond2 <- coef(model.cond2)[,which(BIC.cond2== min(BIC.cond2))]
+
+model.cond3 <- compCL(y = cond, Z = lymp_leaf, intercept = T)
+
+BIC.cond3 <- apply(coef(model.cond3), 2, linear_BIC, outcome = cond, 
+             covariates = log(lymp_leaf))
+coef.cond3 <- coef(model.cond3)[,which(BIC.cond3== min(BIC.cond3))]
+```
+
+
+```{r}
+# Run bootstrap
+health <- dat$R13SHLT
+health1 <- cbind(health, lymp_leaf, demo1)
+# Self-reported health fully adjusted
+CI_health1_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- health1[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_health1 <- apply(CI_health1_boot, 1, quantile, probs = c(0.025, 0.975))
+# Self-reported health adjusted with only gender and age
+health2 <- cbind(health, lymp_leaf, demo2)
+CI_health2_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- health2[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_health2 <- apply(CI_health2_boot, 1, quantile, probs = c(0.025, 0.975))
+
+# Self-reported health unadjusted
+health3 <- cbind(health, lymp_leaf)
+CI_health3_boot <- apply(samples, 2, FUN = function(ix){
+  dat_boot <- health3[ix,]
+  return (linear_estimate(dat_boot))
+})
+CI_health3 <- apply(CI_health3_boot, 1, quantile, probs = c(0.025, 0.975))
+```
+
+```{r}
+model.health1 <- compCL(y = health, Z = lymp_leaf, Zc = demo1, intercept = T)
+
+BIC.health1 <- apply(coef(model.health1), 2, linear_BIC, outcome = health, 
+             covariates = cbind(log(lymp_leaf), demo1))
+coef.health1 <- coef(model.health1)[,which(BIC.health1== min(BIC.health1))]
+
+model.health2 <- compCL(y = health, Z = lymp_leaf, Zc = demo2, intercept = T)
+
+BIC.health2 <- apply(coef(model.health2), 2, linear_BIC, outcome = health, 
+             covariates = cbind(log(lymp_leaf), demo2))
+coef.health2 <- coef(model.health2)[,which(BIC.health2== min(BIC.health2))]
+
+model.health3 <- compCL(y = health, Z = lymp_leaf, intercept = T)
+
+BIC.health3 <- apply(coef(model.health3), 2, linear_BIC, outcome = health, 
+             covariates = log(lymp_leaf))
+coef.health3 <- coef(model.health3)[,which(BIC.health3== min(BIC.health3))]
+```
+
+```{r}
+# This function gets the estimated coefficients from above models
+get_betas <- function(object){
+betas <- as.data.frame(object$beta)[1:16,]
+betas$coef <- row.names(betas)
+betas <- reshape::melt(betas, id = "coef")
+betas$variable <- as.numeric(gsub("L", "", betas$variable))
+betas$lambda <- object$lam[betas$variable]
+return (betas)
+}
+```
+
+```{r}
+# Traceplot for fully adjusted self-reported health model
+betas <- get_betas(model.health1)
+betas$lambda <- log(betas$lambda)
+betas$coef <- factor(betas$coef, levels = c("TCD4N","TCD4CM","TCD4EM",
+                                            "TCD4TDEM","TCD4O","TCD8N","TCD8CM",
+                                            "TCD8EM","TCD8TDEM","TCD8O","TO","BN",
+                                            "BMIgD-","BMIgD+","BO","LYMPO"))
+
+ggplot(betas, aes(lambda, value, color = coef)) + 
+    geom_line(aes(linetype=coef)) + 
+    xlab("Lambda (log scale)") + 
+    guides(color = guide_legend(title = ""), 
+           linetype = guide_legend(title = "")) +
+    theme_bw() + 
+    theme(legend.key.width = unit(3,"lines")) +
+  ggtitle("Solution paths for health status vs. lymphocytes")+
+  scale_color_manual(values=c("violetred1","violetred1", "violetred1",
+                              "violetred1","violetred1","#E69F00","#E69F00",
+                              "#E69F00", "#E69F00", "#E69F00", "orangered3",
+                              "#56B4E9","#56B4E9",
+                              "#56B4E9","#56B4E9","darkgreen"))+
+   scale_linetype_manual(values=c("solid", "dotted","dashed","longdash",
+                                  "dotdash","solid", "dotted","dashed",
+                                  "longdash",
+                                  "dotdash","solid","solid",
+                                  "dotted","dashed","longdash",
+                                  "solid"))
+```
+
+
+```{r}
+# Save bootstrap results
+save(CI_cond1_boot, file = "CI_cond1_boot.Rdata")
+save(CI_cond2_boot, file = "CI_cond2_boot.Rdata")
+save(CI_cond3_boot, file = "CI_cond3_boot.Rdata")
+save(CI_health1_boot, file = "CI_health1_boot.Rdata")
+save(CI_health2_boot, file = "CI_health2_boot.Rdata")
+save(CI_health3_boot, file = "CI_health3_boot.Rdata")
+```
+
