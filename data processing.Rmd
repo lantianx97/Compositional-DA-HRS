@@ -1,0 +1,162 @@
+---
+title: "Data Processing"
+output: pdf_document
+date: "2024-04-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library("ggplot2")
+library(stringr)
+```
+
+
+```{r}
+# Import Flow Cytometry Results from 2016 Venous Blood Study (VBS)
+flocyt16 <- read.csv("data/flocyt2016.csv")
+# Import rand longitudinal data
+rand <- read.csv("data/randhrs.csv")
+# Import 2016 VBS data
+vbs <- read.csv("data/HRS2016VBS.csv")
+```
+
+
+```{r}
+flocyt16$HHIDPN <- flocyt16$HHID*1000+flocyt16$PN
+rand_sub <- rand[rand$HHIDPN %in% flocyt16$HHIDPN,] 
+# HHIDPN = 906126010 not in rand longitudinal file (no household 906126)
+flocyt16_sub <- flocyt16[flocyt16$HHIDPN %in% rand_sub$HHIDPN,]
+
+# Extract columns contain percentages
+pct_names <- grepl("_PCT", colnames(flocyt16_sub), fixed = T)
+flocyt16_pct <- flocyt16_sub[, pct_names]
+flocyt16_pct$HHIDPN <- flocyt16_sub$HHIDPN
+colnames(flocyt16_pct) <- str_replace(colnames(flocyt16_pct), 
+                                      "_PCT", "")
+# Extract lymphocytes percentages
+dat.cell <- flocyt16_pct[, c("HHIDPN","PTCELL","PCD4T","PCD8T","PBCELL",
+                             "PCD8M","PCD4M","PCD8TEMRA","PCD4TEMRA",
+                             "PIGD_PLUS_MEMB","PIGD_MINUS_MEMB","PCD8N",
+                             "PCD4N","PNAIVEB","PCD8TEM","PCD4TEM")]
+```
+
+```{r}
+dat.cell <- dat.cell[complete.cases(dat.cell),] # 6900 obs
+min <- min(dat.cell[dat.cell != 0], na.rm = TRUE) #2.95256991685563e-06
+# Replace zeros with minimum
+dat.cell[dat.cell == 0] <- min
+
+# Remove observations whose bottom nodes percentages added up greater than 1
+cd4.remove <- dat.cell[dat.cell$PCD4M+dat.cell$PCD4N+dat.cell$PCD4TEM+
+          dat.cell$PCD4TEMRA > 1,]$HHIDPN #5 obs
+cd8.remove <- dat.cell[dat.cell$PCD8M+dat.cell$PCD8N+dat.cell$PCD8TEM+
+          dat.cell$PCD8TEMRA > 1, ]$HHIDPN #33 obs
+b.remove <- dat.cell[dat.cell$PIGD_MINUS_MEMB+dat.cell$PIGD_PLUS_MEMB+
+          dat.cell$PNAIVEB > 1.0,]$HHIDPN #1 ob
+
+remove <- c(cd4.remove, cd8.remove, b.remove)
+
+dat.cell <- dat.cell[!(dat.cell$HHIDPN %in% remove),] # 6861 obs
+```
+
+```{r}
+# Add “other” nodes based on the tree structure
+cells <- dat.cell
+cells$PLYM_OTHER <- 1-cells$PTCELL-cells$PBCELL
+cells$PTCELL_OTHER <- 1-cells$PCD4T-cells$PCD8T
+cells$PBCELL_OTHER <- 1-cells$PIGD_PLUS_MEMB-cells$PIGD_MINUS_MEMB-cells$PNAIVEB
+cells$PCD4_OTHER <- 1-cells$PCD4N-cells$PCD4M-cells$PCD4TEM-cells$PCD4TEMRA
+cells$PCD8_OTHER <- 1-cells$PCD8N-cells$PCD8M-cells$PCD8TEM-cells$PCD8TEMRA
+```
+
+```{r}
+# Recompute percentages based on the tree structure
+cd4m <- cells$PCD4M*cells$PCD4T*cells$PTCELL
+cd4n <- cells$PCD4N*cells$PCD4T*cells$PTCELL
+cd4tem <- cells$PCD4TEM*cells$PCD4T*cells$PTCELL
+cd4temra <- cells$PCD4TEMRA*cells$PCD4T*cells$PTCELL
+cd4other <- cells$PCD4_OTHER*cells$PCD4T*cells$PTCELL
+cd8m <- cells$PCD8M*cells$PCD8T*cells$PTCELL
+cd8n <- cells$PCD8N*cells$PCD8T*cells$PTCELL
+cd8tem <- cells$PCD8TEM*cells$PCD8T*cells$PTCELL
+cd8temra <- cells$PCD8TEMRA*cells$PCD8T*cells$PTCELL
+cd8other <- cells$PCD8_OTHER*cells$PCD8T*cells$PTCELL
+tother <- cells$PTCELL_OTHER*cells$PTCELL
+bminus <- cells$PIGD_MINUS_MEMB*cells$PBCELL
+bplus <- cells$PIGD_PLUS_MEMB*cells$PBCELL
+bnaive <- cells$PNAIVEB*cells$PBCELL
+bother <- cells$PBCELL_OTHER*cells$PBCELL
+lymother <- cells$PLYM_OTHER
+cd4 <- cells$PCD4T*cells$PTCELL
+cd8 <- cells$PCD8T*cells$PTCELL
+# Check now all bottom nodes add up to 1
+summary(cd4m+cd4n+cd4tem+cd4temra+cd4other+cd8m+cd8n+cd8tem+
+          cd8temra+cd8other+bminus+bplus+bnaive+bother+
+          lymother+tother)
+```
+
+```{r}
+lymphocytes <- data.frame("HHIDPN" = cells$HHIDPN, "TCELL" = cells$PTCELL,
+                          "BCELL" = cells$PBCELL, "LYMPOTHER" = lymother,
+                          "CD4T" = cd4, "CD8T" = cd8, "TOTHER" = tother,
+                          "CD4M" = cd4m, "CD4N" = cd4n, "CD4TEM" = cd4tem,
+                          "CD4TEMRA" = cd4temra, "CD4OTHER" = cd4other,
+                          "CD8M" = cd8m, "CD8N" = cd8n, 
+                          "CD8TEM" = cd8tem, "CD8TEMRA" = cd8temra, 
+                          "CD8OTHER" = cd8other,
+                          "IGD_PLUS_MEMB" = bplus, "IGD_MINUS_MEMB" = bminus,
+                          "BNAIVE" = bnaive, "BOTHER" = bother)
+# Export data for future use
+write.csv(lymphocytes, "lymphocytes_temp.csv", row.names = F)
+```
+
+```{r}
+lymp <- read.csv("lymphocytes_temp.csv")
+
+# Extract demographic and health info from the rand file
+sub <- c("HHIDPN", "RAGENDER", "RARACEM","RAHISPAN", "RAEDYRS",
+         "R13CONDE","R13AGEY_B","R13SHLT")
+rand_sub <- rand_sub[, sub]
+
+# Generate a combined race: 0 non-hisp white, 1 black, 2 Hispanic, 3 other 
+rand_sub$race <- ifelse(rand_sub$RARACEM == 1 & 
+                                 rand_sub$RAHISPA == 0, 0,
+                               ifelse(rand_sub$RARACEM == 2 & 
+                                      rand_sub$RAHISPA == 0, 1,
+                               ifelse(rand_sub$RAHISPA == 1, 2, 3)))
+
+# Participant education: 0 primary school, 1 middle school, 
+# 2 high school, 3 college and above
+
+rand_sub$edu <- ifelse(rand_sub$RAEDYRS <= 8, 0,
+                              ifelse(rand_sub$RAEDYRS > 8 & 
+                                    rand_sub$RAEDYRS <= 11, 1,
+                              ifelse(rand_sub$RAEDYRS == 12, 2,
+                              ifelse(rand_sub$RAEDYRS > 12 &
+                                    rand_sub$RAEDYRS <= 17, 3, 4))))
+# gender: 1 male, 2 female to 0 and 1
+rand_sub$gender <- rand_sub$RAGENDER-1
+demo <- rand_sub[,c("HHIDPN", "gender", "race", "R13AGEY_B",
+                    "edu", "R13CONDE", "R13SHLT")]
+
+dat <- merge(lymp, demo, by = "HHIDPN")
+
+vbs$HHIDPN <- vbs$HHID*1000+vbs$PN
+# Extract weight and CMV info
+vbs <- vbs[, c("HHIDPN","PCMVGINT", "PVBSWGTR")]
+# CMV: 1 reactive or borderline, 0 non-reactive
+vbs$cmv[vbs$PCMVGINT == 1 | vbs$PCMVGINT ==3] <- 1
+vbs$cmv[vbs$PCMVGINT == 2] <- 0
+vbs <- vbs[,c("HHIDPN", "cmv", "PVBSWGTR")]
+dat <- merge(dat, vbs, by = "HHIDPN")
+# Only include participants with weight > 0
+dat <- dat[dat$PVBSWGTR > 0,] # 6861 to 6326 obs
+
+# Complete case
+dat.c <- dat[complete.cases(dat),] # 6326 to 6250 obs
+
+# Export data for future use
+write.csv(dat.c, "lymp_demo_health.csv", row.names = F) 
+```
+
